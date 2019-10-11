@@ -5,8 +5,9 @@ type Apps struct {
 }
 
 type App struct {
-	ID    string `json:"id"`
-	Tasks []Task `json:"tasks"`
+	ID          string        `json:"id"`
+	Tasks       []Task        `json:"tasks"`
+	HealthCheck []HealthCheck `json:"healthChecks"`
 }
 
 type Task struct {
@@ -19,7 +20,6 @@ type Task struct {
 type State string
 
 const (
-	StateUnknown  State = ""
 	StateStaging  State = "TASK_STAGING"
 	StateStarting State = "TASK_STARTING"
 	StateRunning  State = "TASK_RUNNING"
@@ -45,4 +45,24 @@ type EventStatusUpdate struct {
 	Ports     []int  `json:"ports"`
 	TaskID    string `json:"taskId"`
 	TaskState State  `json:"taskStatus"`
+}
+
+type HealthCheckProtocol string
+
+const (
+	HealthCheckHTTP      HealthCheckProtocol = "HTTP"
+	HealthCheckMesosHTTP HealthCheckProtocol = "MESOS_HTTP"
+)
+
+type HealthCheck struct {
+	Protocol           HealthCheckProtocol `json:"protocol"`
+	Interval           int                 `json:"intervalSeconds"`
+	MaxConsecutiveFail int                 `json:"maxConsecutiveFailures"`
+	TimeOut            int                 `json:"timeoutSeconds"`
+	Delay              int                 `json:"delaySeconds"`
+	Path               string              `json:"path"`
+	PortIndex          int                 `json:"portIndex"`
+	Command            struct {
+		Value string `json:"value"`
+	} `json:"command"`
 }

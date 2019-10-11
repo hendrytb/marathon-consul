@@ -62,3 +62,29 @@ func (c *Client) DeRegister(id string) error {
 	}
 	return nil
 }
+
+func (c *Client) List() ([]string, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseUrl+"/v1/agent/services?filter=mesos+in+Tags", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := c.c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.Body != nil {
+		defer res.Body.Close()
+	}
+
+	var a map[string]interface{}
+	if err := json.NewDecoder(res.Body).Decode(&a); err != nil {
+		return nil, err
+	}
+	s := make([]string, 0)
+	for k := range a {
+		s = append(s, k)
+	}
+	return s, nil
+}

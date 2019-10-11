@@ -6,13 +6,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/mataharimall/mesos-consul/consul"
 	"github.com/mataharimall/mesos-consul/mesos"
 )
 
-// TODO: health check
+// Skipping registering non http services
 // TODO: on first load, get list of consul services tag with "mesos" and then clean up non-existing Mesos service
 func main() {
 	consulPtr := flag.String("consul", "http://127.0.0.1:8500", "Consul address")
@@ -62,6 +63,18 @@ func main() {
 		}
 	}
 
+	// Deregister all consul list
+	l, err := con.List()
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, s := range l {
+		err := con.DeRegister(s)
+		if err != nil {
+			log.Println("unable to deregister " + s)
+		}
+	}
+
 	apps, err := m.List()
 	if err != nil {
 		log.Fatal(err)
@@ -84,6 +97,12 @@ func main() {
 
 func mesosAppToConsul(a mesos.App) []consul.Service {
 	ss := make([]consul.Service, 0)
+
+	h := mesosHealthToConsul(a.HealthCheck)
+	if h == nil {
+		return nil
+	}
+
 	for _, t := range a.Tasks {
 		if t.State != mesos.StateRunning {
 			log.Println(t.State)
@@ -95,18 +114,26 @@ func mesosAppToConsul(a mesos.App) []consul.Service {
 			continue
 		}
 
+		sh := *h
+		sh.HTTP = "http://" + t.Host + ":" + strconv.Itoa(t.Ports[a.HealthCheck[0].PortIndex]) + sh.HTTP
 		ss = append(ss, consul.Service{
 			ID:      t.ID,
 			Name:    strings.Replace(strings.Trim(a.ID, "/"), "/", ".", -1),
 			Tags:    []string{"mesos"},
 			Address: t.Host,
 			Port:    t.Ports[0],
+			Check:   sh,
 		})
 	}
 	return ss
 }
 
 func mesosTaskToConsul(a mesos.App, taskId string) *consul.Service {
+	h := mesosHealthToConsul(a.HealthCheck)
+	if h == nil {
+		return nil
+	}
+
 	for _, t := range a.Tasks {
 		if t.ID != taskId {
 			continue
@@ -117,13 +144,34 @@ func mesosTaskToConsul(a mesos.App, taskId string) *consul.Service {
 			return nil
 		}
 
+		sh := *h
+		sh.HTTP = "http://" + t.Host + ":" + strconv.Itoa(t.Ports[0]) + sh.HTTP
 		return &consul.Service{
 			ID:      t.ID,
 			Name:    strings.Replace(strings.Trim(a.ID, "/"), "/", ".", -1),
 			Tags:    []string{"mesos"},
 			Address: t.Host,
 			Port:    t.Ports[0],
+			Check:   sh,
 		}
 	}
 	return nil
+}
+
+func mesosHealthToConsul(hs []mesos.HealthCheck) *consul.Check {
+	if len(hs) == 0 {
+		return nil
+	}
+	h := hs[0]
+	switch h.Protocol {
+	case mesos.HealthCheckHTTP, mesos.HealthCheckMesosHTTP:
+		return &consul.Check{
+			HTTP:     h.Path,
+			Interval: strconv.Itoa(h.Interval) + "s",
+			//TTL:      strconv.Itoa(h.TimeOut) + "s",
+			Timeout: strconv.Itoa(h.TimeOut) + "s",
+		}
+	default:
+		return nil
+	}
 }

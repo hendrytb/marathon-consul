@@ -6,4 +6,12 @@ type Service struct {
 	Tags    []string `json:"Tags"`
 	Address string   `json:"Address"`
 	Port    int      `json:"Port"`
+	Check   Check    `json:"Check"`
+}
+
+type Check struct {
+	HTTP     string `json:"HTTP"`
+	Interval string `json:"Interval"`
+	//TTL      string `json:"TTL"`
+	Timeout string `json:"Timeout"`
 }
