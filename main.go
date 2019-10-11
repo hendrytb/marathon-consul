@@ -12,6 +12,8 @@ import (
 	"github.com/mataharimall/mesos-consul/mesos"
 )
 
+// TODO: health check
+// TODO: on first load, get list of consul services tag with "mesos" and then clean up non-existing Mesos service
 func main() {
 	consulPtr := flag.String("consul", "http://127.0.0.1:8500", "Consul address")
 	mesosPtr := flag.String("mesos", "http://127.0.0.1:8080", "Mesos address")
@@ -33,7 +35,31 @@ func main() {
 
 	m := mesos.NewClient(c, *mesosPtr)
 	m.OnEvent = func(e mesos.EventStatusUpdate) {
-		fmt.Println(e.TimeStamp, e.TaskStatus, e.AppID, ",", e.TaskID, "(", e.Host, ":", e.Ports, ")")
+		fmt.Println(e.TimeStamp, e.TaskState, e.AppID, ",", e.TaskID, "(", e.Host, ":", e.Ports, ")")
+
+		switch e.TaskState {
+		case mesos.StateStaging, mesos.StateStarting:
+			// Do nothing
+
+		case mesos.StateRunning:
+			app, err := m.App(e.AppID)
+			if err != nil {
+				log.Println("unable to get app info:", e.AppID)
+				return
+			}
+			s := mesosTaskToConsul(app, e.TaskID)
+			if s == nil {
+				return
+			}
+			if err := con.Register(*s); err != nil {
+				log.Printf("unable to register task: %v (%v)\n", e.AppID, e.TaskID)
+			}
+
+		case mesos.StateFinished, mesos.StateFailed, mesos.StateKilling, mesos.StateKilled, mesos.StateLost:
+			if err := con.DeRegister(e.TaskID); err != nil {
+				log.Printf("unable to deregister task: %v (%v)\n", e.AppID, e.TaskID)
+			}
+		}
 	}
 
 	apps, err := m.List()
@@ -42,7 +68,7 @@ func main() {
 	}
 	log.Printf("Found %v apps\n", len(apps))
 	for _, app := range apps {
-		css := mesos2consul(app)
+		css := mesosAppToConsul(app)
 		for _, cs := range css {
 			err := con.Register(cs)
 			if err != nil {
@@ -56,7 +82,7 @@ func main() {
 	}
 }
 
-func mesos2consul(a mesos.App) []consul.Service {
+func mesosAppToConsul(a mesos.App) []consul.Service {
 	ss := make([]consul.Service, 0)
 	for _, t := range a.Tasks {
 		if t.State != mesos.StateRunning {
@@ -78,4 +104,26 @@ func mesos2consul(a mesos.App) []consul.Service {
 		})
 	}
 	return ss
+}
+
+func mesosTaskToConsul(a mesos.App, taskId string) *consul.Service {
+	for _, t := range a.Tasks {
+		if t.ID != taskId {
+			continue
+		}
+
+		if len(t.Ports) == 0 {
+			fmt.Println("No port:", a.ID, t.ID)
+			return nil
+		}
+
+		return &consul.Service{
+			ID:      t.ID,
+			Name:    strings.Replace(strings.Trim(a.ID, "/"), "/", ".", -1),
+			Tags:    []string{"mesos"},
+			Address: t.Host,
+			Port:    t.Ports[0],
+		}
+	}
+	return nil
 }

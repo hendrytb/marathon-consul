@@ -38,11 +38,11 @@ const (
 // - instance_health_changed_event
 
 type EventStatusUpdate struct {
-	Type       string `json:"eventType"`
-	TimeStamp  string `json:"timestamp"`
-	AppID      string `json:"appId"`
-	Host       string `json:"host"`
-	Ports      []int  `json:"ports"`
-	TaskID     string `json:"taskId"`
-	TaskStatus State  `json:"taskStatus"`
+	Type      string `json:"eventType"`
+	TimeStamp string `json:"timestamp"`
+	AppID     string `json:"appId"`
+	Host      string `json:"host"`
+	Ports     []int  `json:"ports"`
+	TaskID    string `json:"taskId"`
+	TaskState State  `json:"taskStatus"`
 }
