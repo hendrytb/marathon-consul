@@ -11,36 +11,58 @@ import (
 type Client struct {
 	c       *http.Client
 	baseUrl string
-	OnEvent func(ev EventStatusUpdate)
+	OnEvent func(Task)
+	apps    map[string]App
+	tasks   map[string]Task
 }
 
-func NewClient(c *http.Client, baseUrl string) *Client {
-	return &Client{c, baseUrl, func(EventStatusUpdate) {}}
-}
+func NewClient(c *http.Client, baseUrl string) (*Client, error) {
+	cl := &Client{c, baseUrl, func(Task) {}, make(map[string]App), make(map[string]Task)}
 
-func (c *Client) List() ([]App, error) {
-	return c.list("")
-}
-
-func (c *Client) App(id string) (App, error) {
-	x, err := c.list(id)
+	apps, err := cl.getApps()
 	if err != nil {
-		return App{}, err
+		return cl, err
 	}
-	if len(x) != 1 {
-		return App{}, errors.New("id not found: " + id)
+
+	for _, app := range apps.Apps {
+		hc := app.HealthCheck.Get()
+		if hc == nil {
+			continue
+		}
+
+		cl.addApp(app.App)
+
+		// register tasks
+		for _, task := range app.Tasks {
+			task.AppID = app.ID
+			task.HealthCheck = *hc
+			cl.tasks[task.ID] = task
+		}
 	}
-	return x[0], nil
+
+	return cl, nil
 }
 
-func (c *Client) Subscribe() error {
-	req, err := http.NewRequest(http.MethodGet, c.baseUrl+"/v2/events", nil)
+func (cl *Client) Tasks() map[string]Task {
+	return cl.tasks
+}
+
+func (cl *Client) App(id string) (App, error) {
+	if a, ok := cl.apps[id]; ok {
+		return a, nil
+	}
+
+	return App{}, errors.New("App ID not found: " + id)
+}
+
+func (cl *Client) Subscribe() error {
+	req, err := http.NewRequest(http.MethodGet, cl.baseUrl+"/v2/events", nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Add("Accept", "text/event-stream")
 
-	res, err := c.c.Do(req)
+	res, err := cl.c.Do(req)
 	if err != nil {
 		return err
 	}
@@ -53,6 +75,7 @@ func (c *Client) Subscribe() error {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			log.Println(err)
+			return err
 		}
 
 		if len(line) < 7 {
@@ -65,37 +88,64 @@ func (c *Client) Subscribe() error {
 			continue
 		}
 
-		var e EventStatusUpdate
+		var e Event
 		if err := json.Unmarshal(line[6:], &e); err != nil {
 			log.Printf("error %v, data: %v\n", err, string(line[6:]))
 		}
+
 		switch e.Type {
+		case "api_post_event":
+			cl.addApp(e.App)
+
 		case "status_update_event":
-			c.OnEvent(e)
+			h := cl.apps[e.AppID].HealthCheck.Get()
+			if h != nil {
+				t := Task{
+					ID:          e.TaskID,
+					Host:        e.Host,
+					Ports:       e.Ports,
+					State:       e.TaskState,
+					AppID:       e.AppID,
+					HealthCheck: *h,
+				}
+
+				switch t.State {
+				case StateStaging, StateStarting:
+					// Do nothing
+				case StateRunning:
+					cl.tasks[t.ID] = t
+				case StateFinished, StateFailed, StateKilling, StateKilled, StateLost:
+					delete(cl.tasks, t.ID)
+				}
+
+				cl.OnEvent(t)
+			}
 		}
 	}
-	return nil
 }
 
-func (c *Client) list(id string) ([]App, error) {
-	if id != "" {
-		id = "&id=" + id
-	}
-	req, err := http.NewRequest(http.MethodGet, c.baseUrl+"/v2/apps?embed=apps.tasks"+id, nil)
+func (cl *Client) getApps() (Apps, error) {
+	var a Apps
+	req, err := http.NewRequest(http.MethodGet, cl.baseUrl+"/v2/apps?embed=apps.tasks", nil)
 	if err != nil {
-		return nil, err
+		return a, err
 	}
 
-	res, err := c.c.Do(req)
+	res, err := cl.c.Do(req)
 	if err != nil {
-		return nil, err
+		return a, err
 	}
 
 	if res.Body != nil {
 		defer res.Body.Close()
 	}
 
-	var a Apps
 	err = json.NewDecoder(res.Body).Decode(&a)
-	return a.Apps, err
+	return a, err
+}
+
+func (cl *Client) addApp(app App) {
+	if app.HealthCheck.Get() != nil {
+		cl.apps[app.ID] = app
+	}
 }

@@ -13,8 +13,8 @@ import (
 	"github.com/mataharimall/mesos-consul/mesos"
 )
 
-// Skipping registering non http services
-// TODO: on first load, get list of consul services tag with "mesos" and then clean up non-existing Mesos service
+// TODO: Marathon label into consul tag
+// TODO: Handle mesos.Subscribe() error
 func main() {
 	consulPtr := flag.String("consul", "http://127.0.0.1:8500", "Consul address")
 	mesosPtr := flag.String("mesos", "http://127.0.0.1:8080", "Mesos address")
@@ -34,60 +34,65 @@ func main() {
 
 	con := consul.NewClient(c, *consulPtr)
 
-	m := mesos.NewClient(c, *mesosPtr)
-	m.OnEvent = func(e mesos.EventStatusUpdate) {
-		fmt.Println(e.TimeStamp, e.TaskState, e.AppID, ",", e.TaskID, "(", e.Host, ":", e.Ports, ")")
+	m, err := mesos.NewClient(c, *mesosPtr)
+	if err != nil {
+		log.Fatal("Unable to connect to Marathon:", err)
+	}
 
-		switch e.TaskState {
+	m.OnEvent = func(t mesos.Task) {
+		switch t.State {
 		case mesos.StateStaging, mesos.StateStarting:
 			// Do nothing
 
 		case mesos.StateRunning:
-			app, err := m.App(e.AppID)
+			cs := mesosTaskToConsulService(t)
+			err := con.Register(cs)
 			if err != nil {
-				log.Println("unable to get app info:", e.AppID)
-				return
-			}
-			s := mesosTaskToConsul(app, e.TaskID)
-			if s == nil {
-				return
-			}
-			if err := con.Register(*s); err != nil {
-				log.Printf("unable to register task: %v (%v)\n", e.AppID, e.TaskID)
+				log.Printf("error registering %v (%v): %v\n", cs.Name, cs.ID, err)
 			}
 
 		case mesos.StateFinished, mesos.StateFailed, mesos.StateKilling, mesos.StateKilled, mesos.StateLost:
-			if err := con.DeRegister(e.TaskID); err != nil {
-				log.Printf("unable to deregister task: %v (%v)\n", e.AppID, e.TaskID)
+			err := con.DeRegister(t.ID)
+			if err != nil {
+				log.Println("unable to deregister " + t.ID)
 			}
 		}
 	}
 
-	// Deregister all consul list
+	// Deregister non existing service in consul list
+	mTasks := m.Tasks()
+	log.Printf("%v services found in Marathon\n", len(mTasks))
+	r := 0 // services that already exists on consul
 	l, err := con.List()
 	if err != nil {
 		log.Fatal(err)
 	}
 	for _, s := range l {
+		if _, ok := mTasks[s]; ok {
+			r++
+			delete(mTasks, s)
+			continue
+		}
+
 		err := con.DeRegister(s)
 		if err != nil {
 			log.Println("unable to deregister " + s)
 		}
 	}
-
-	apps, err := m.List()
-	if err != nil {
-		log.Fatal(err)
+	if len(l) > 0 {
+		log.Printf("%v services exists on Consul, %v are cleaned up, %v stays\n", len(l), len(l)-r, r)
 	}
-	log.Printf("Found %v apps\n", len(apps))
-	for _, app := range apps {
-		css := mesosAppToConsul(app)
-		for _, cs := range css {
-			err := con.Register(cs)
-			if err != nil {
-				log.Printf("error registering %v (%v): %v\n", cs.Name, cs.ID, err)
-			}
+
+	// Register service not yet exists in consul
+	for _, task := range mTasks {
+		cs := mesosTaskToConsulService(task)
+		err := con.Register(cs)
+		if err != nil {
+			log.Printf("error registering %v (%v): %v\n", cs.Name, cs.ID, err)
 		}
+	}
+	if len(mTasks) > 0 {
+		log.Printf("%v services registered on Consul\n", len(mTasks))
 	}
 
 	if err := m.Subscribe(); err != nil {
@@ -95,83 +100,17 @@ func main() {
 	}
 }
 
-func mesosAppToConsul(a mesos.App) []consul.Service {
-	ss := make([]consul.Service, 0)
-
-	h := mesosHealthToConsul(a.HealthCheck)
-	if h == nil {
-		return nil
-	}
-
-	for _, t := range a.Tasks {
-		if t.State != mesos.StateRunning {
-			log.Println(t.State)
-			continue
-		}
-
-		if len(t.Ports) == 0 {
-			fmt.Println("No port:", a.ID, t.ID)
-			continue
-		}
-
-		sh := *h
-		sh.HTTP = "http://" + t.Host + ":" + strconv.Itoa(t.Ports[a.HealthCheck[0].PortIndex]) + sh.HTTP
-		ss = append(ss, consul.Service{
-			ID:      t.ID,
-			Name:    strings.Replace(strings.Trim(a.ID, "/"), "/", ".", -1),
-			Tags:    []string{"mesos"},
-			Address: t.Host,
-			Port:    t.Ports[0],
-			Check:   sh,
-		})
-	}
-	return ss
-}
-
-func mesosTaskToConsul(a mesos.App, taskId string) *consul.Service {
-	h := mesosHealthToConsul(a.HealthCheck)
-	if h == nil {
-		return nil
-	}
-
-	for _, t := range a.Tasks {
-		if t.ID != taskId {
-			continue
-		}
-
-		if len(t.Ports) == 0 {
-			fmt.Println("No port:", a.ID, t.ID)
-			return nil
-		}
-
-		sh := *h
-		sh.HTTP = "http://" + t.Host + ":" + strconv.Itoa(t.Ports[0]) + sh.HTTP
-		return &consul.Service{
-			ID:      t.ID,
-			Name:    strings.Replace(strings.Trim(a.ID, "/"), "/", ".", -1),
-			Tags:    []string{"mesos"},
-			Address: t.Host,
-			Port:    t.Ports[0],
-			Check:   sh,
-		}
-	}
-	return nil
-}
-
-func mesosHealthToConsul(hs []mesos.HealthCheck) *consul.Check {
-	if len(hs) == 0 {
-		return nil
-	}
-	h := hs[0]
-	switch h.Protocol {
-	case mesos.HealthCheckHTTP, mesos.HealthCheckMesosHTTP:
-		return &consul.Check{
-			HTTP:     h.Path,
-			Interval: strconv.Itoa(h.Interval) + "s",
-			//TTL:      strconv.Itoa(h.TimeOut) + "s",
-			Timeout: strconv.Itoa(h.TimeOut) + "s",
-		}
-	default:
-		return nil
+func mesosTaskToConsulService(task mesos.Task) consul.Service {
+	return consul.Service{
+		ID:      task.ID,
+		Name:    strings.Replace(strings.Trim(task.AppID, "/"), "/", ".", -1),
+		Tags:    []string{"mesos"},
+		Address: task.Host,
+		Port:    task.Ports[0],
+		Check: consul.Check{
+			HTTP:     "http://" + task.Host + ":" + strconv.Itoa(task.Ports[task.HealthCheck.PortIndex]) + task.HealthCheck.Path,
+			Interval: strconv.Itoa(task.HealthCheck.Interval) + "s",
+			Timeout:  strconv.Itoa(task.HealthCheck.TimeOut) + "s",
+		},
 	}
 }

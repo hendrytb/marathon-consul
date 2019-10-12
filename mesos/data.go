@@ -1,13 +1,15 @@
 package mesos
 
 type Apps struct {
-	Apps []App `json:"apps"`
+	Apps []struct {
+		App
+		Tasks []Task `json:"tasks"`
+	} `json:"apps"`
 }
 
 type App struct {
-	ID          string        `json:"id"`
-	Tasks       []Task        `json:"tasks"`
-	HealthCheck []HealthCheck `json:"healthChecks"`
+	ID          string       `json:"id"`
+	HealthCheck HealthChecks `json:"healthChecks"`
 }
 
 type Task struct {
@@ -15,6 +17,10 @@ type Task struct {
 	Host  string `json:"host"`
 	Ports []int  `json:"ports"`
 	State State  `json:"state"`
+
+	// Provided by client
+	AppID       string      `json:"-"`
+	HealthCheck HealthCheck `json:"-"`
 }
 
 type State string
@@ -37,9 +43,14 @@ const (
 // - unknown_instance_terminated_event
 // - instance_health_changed_event
 
-type EventStatusUpdate struct {
+type Event struct {
 	Type      string `json:"eventType"`
 	TimeStamp string `json:"timestamp"`
+
+	// Specific for "api_post_event"
+	App App `json:"appDefinition"`
+
+	// For "status_update_event"
 	AppID     string `json:"appId"`
 	Host      string `json:"host"`
 	Ports     []int  `json:"ports"`
@@ -54,6 +65,8 @@ const (
 	HealthCheckMesosHTTP HealthCheckProtocol = "MESOS_HTTP"
 )
 
+type HealthChecks []HealthCheck
+
 type HealthCheck struct {
 	Protocol           HealthCheckProtocol `json:"protocol"`
 	Interval           int                 `json:"intervalSeconds"`
@@ -65,4 +78,13 @@ type HealthCheck struct {
 	Command            struct {
 		Value string `json:"value"`
 	} `json:"command"`
+}
+
+func (hc HealthChecks) Get() *HealthCheck {
+	for _, h := range hc {
+		if h.Protocol == HealthCheckHTTP || h.Protocol == HealthCheckMesosHTTP {
+			return &h
+		}
+	}
+	return nil
 }
