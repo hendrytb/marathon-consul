@@ -34,8 +34,7 @@ func NewClient(c *http.Client, baseUrl string) (*Client, error) {
 
 		// register tasks
 		for _, task := range app.Tasks {
-			task.AppID = app.ID
-			task.HealthCheck = *hc
+			task.App = app.App
 			cl.tasks[task.ID] = task
 		}
 	}
@@ -91,6 +90,7 @@ func (cl *Client) Subscribe() error {
 		var e Event
 		if err := json.Unmarshal(line[6:], &e); err != nil {
 			log.Printf("error %v, data: %v\n", err, string(line[6:]))
+			continue
 		}
 
 		switch e.Type {
@@ -101,12 +101,11 @@ func (cl *Client) Subscribe() error {
 			h := cl.apps[e.AppID].HealthCheck.Get()
 			if h != nil {
 				t := Task{
-					ID:          e.TaskID,
-					Host:        e.Host,
-					Ports:       e.Ports,
-					State:       e.TaskState,
-					AppID:       e.AppID,
-					HealthCheck: *h,
+					ID:    e.TaskID,
+					Host:  e.Host,
+					Ports: e.Ports,
+					State: e.TaskState,
+					App:   cl.apps[e.AppID],
 				}
 
 				switch t.State {

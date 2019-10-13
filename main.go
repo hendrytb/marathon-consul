@@ -46,15 +46,17 @@ func main() {
 
 		case mesos.StateRunning:
 			cs := mesosTaskToConsulService(t)
-			err := con.Register(cs)
-			if err != nil {
+			if err := con.Register(cs); err != nil {
 				log.Printf("error registering %v (%v): %v\n", cs.Name, cs.ID, err)
+			} else {
+				log.Printf("task registered: %v (%v)\n", t.App.ID, t.ID)
 			}
 
 		case mesos.StateFinished, mesos.StateFailed, mesos.StateKilling, mesos.StateKilled, mesos.StateLost:
-			err := con.DeRegister(t.ID)
-			if err != nil {
+			if err := con.DeRegister(t.ID); err != nil {
 				log.Println("unable to deregister " + t.ID)
+			} else {
+				log.Printf("task deregistered: %v (%v)\n", t.App.ID, t.ID)
 			}
 		}
 	}
@@ -101,16 +103,30 @@ func main() {
 }
 
 func mesosTaskToConsulService(task mesos.Task) consul.Service {
+	hc := task.App.HealthCheck.Get()
+
+	// Support for Fabio Tags (several urlprefix can be combined using semicolon (;) as separator
+	tags := []string{"mesos"}
+	for k, v := range task.App.Labels {
+		if strings.ToLower(k) != "urlprefix" {
+			continue
+		}
+		prefixes := strings.Split(v, ";")
+		for _, prefix := range prefixes {
+			tags = append(tags, "urlprefix-"+prefix)
+		}
+	}
+
 	return consul.Service{
 		ID:      task.ID,
-		Name:    strings.Replace(strings.Trim(task.AppID, "/"), "/", ".", -1),
-		Tags:    []string{"mesos"},
+		Name:    strings.Replace(strings.Trim(task.App.ID, "/"), "/", ".", -1),
+		Tags:    tags,
 		Address: task.Host,
 		Port:    task.Ports[0],
 		Check: consul.Check{
-			HTTP:     "http://" + task.Host + ":" + strconv.Itoa(task.Ports[task.HealthCheck.PortIndex]) + task.HealthCheck.Path,
-			Interval: strconv.Itoa(task.HealthCheck.Interval) + "s",
-			Timeout:  strconv.Itoa(task.HealthCheck.TimeOut) + "s",
+			HTTP:     "http://" + task.Host + ":" + strconv.Itoa(task.Ports[hc.PortIndex]) + hc.Path,
+			Interval: strconv.Itoa(hc.Interval) + "s",
+			Timeout:  strconv.Itoa(hc.TimeOut) + "s",
 		},
 	}
 }

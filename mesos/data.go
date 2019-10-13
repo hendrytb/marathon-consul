@@ -8,8 +8,9 @@ type Apps struct {
 }
 
 type App struct {
-	ID          string       `json:"id"`
-	HealthCheck HealthChecks `json:"healthChecks"`
+	ID          string            `json:"id"`
+	HealthCheck HealthChecks      `json:"healthChecks"`
+	Labels      map[string]string `json:"labels"`
 }
 
 type Task struct {
@@ -19,8 +20,7 @@ type Task struct {
 	State State  `json:"state"`
 
 	// Provided by client
-	AppID       string      `json:"-"`
-	HealthCheck HealthCheck `json:"-"`
+	App App `json:"-"`
 }
 
 type State string
