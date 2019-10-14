@@ -113,7 +113,7 @@ func mesosTaskToConsulService(task mesos.Task) consul.Service {
 		}
 		prefixes := strings.Split(v, ";")
 		for _, prefix := range prefixes {
-			tags = append(tags, "urlprefix-"+prefix)
+			tags = append(tags, "urlprefix-"+strings.Trim(prefix, " "))
 		}
 	}
 
