@@ -115,7 +115,7 @@ func mesosTaskToConsulService(task mesos.Task) consul.Service {
 	// Additionally, multiple Marathon's "urlprefix" label is supported by adding underscore followed with any number (eg: urlprefix_1)
 	tags := []string{"mesos"}
 	for k, v := range task.App.Labels {
-		if strings.ToLower(k) != "urlprefix" {
+		if !regex.MatchString(k) {
 			continue
 		}
 		prefixes := strings.Split(v, ";")
