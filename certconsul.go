@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// CertConsul syncs file based certificate into Consul Key/Value store.
+// CertConsul syncs file based certificate (.crt & .key) into Consul Key/Value store.
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Println("Usage: certconsul <directory> <consul_url_1> <consul_url_2> ...\n\n" +

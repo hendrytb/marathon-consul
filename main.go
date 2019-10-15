@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -15,6 +16,10 @@ import (
 
 // TODO: Marathon label into consul tag
 // TODO: Handle mesos.Subscribe() error
+
+// regex that match to "urlprefix", "urlprefix_1" or "urlprefix_[number]"
+var regex = regexp.MustCompile("(?i)^urlprefix(_\\d+)?$")
+
 func main() {
 	consulPtr := flag.String("consul", "http://127.0.0.1:8500", "Consul address")
 	mesosPtr := flag.String("mesos", "http://127.0.0.1:8080", "Mesos address")
@@ -105,7 +110,9 @@ func main() {
 func mesosTaskToConsulService(task mesos.Task) consul.Service {
 	hc := task.App.HealthCheck.Get()
 
-	// Support for Fabio Tags (several urlprefix can be combined using semicolon (;) as separator
+	// Support for Fabio Tags via Marathon's "urlprefix" label (case insensitive).
+	// Several urlprefix can be combined using semicolon (;) as separator.
+	// Additionally, multiple Marathon's "urlprefix" label is supported by adding underscore followed with any number (eg: urlprefix_1)
 	tags := []string{"mesos"}
 	for k, v := range task.App.Labels {
 		if strings.ToLower(k) != "urlprefix" {
